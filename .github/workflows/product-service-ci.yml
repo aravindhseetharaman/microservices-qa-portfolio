@@ -2,11 +2,11 @@ name: Product Service CI
 
 on:
   push:
-    paths:
-      - 'product-service/**'
+    branches:
+      - main
   pull_request:
-    paths:
-      - 'product-service/**'
+    branches:
+      - main
 
 jobs:
   build-and-test:
@@ -28,7 +28,7 @@ jobs:
           path: ~/.m2
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
 
-      - name: Run unit tests
+      - name: Run tests
         run: |
           cd product-service
           ./mvnw clean test
