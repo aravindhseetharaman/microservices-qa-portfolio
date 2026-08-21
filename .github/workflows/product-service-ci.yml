@@ -62,3 +62,105 @@ jobs:
         with:
           name: order-service-results
           path: order-service/target/surefire-reports/
+
+  pact-contract-testing:
+    needs: [product-service, user-service, order-service]
+    runs-on: ubuntu-latest
+    env:
+      PACTBROKER_URL: http://localhost:9292
+      PACTBROKER_USERNAME: pact
+      PACTBROKER_PASSWORD: pact
+      # The git SHA is the pacticipant version, so every pact/verification is
+      # traceable to the exact commit that produced it, and can-i-deploy can
+      # gate a real deployment on it.
+      PACT_VERSION: ${{ github.sha }}
+      PACT_TAG: ${{ github.ref_name }}
+    services:
+      pact-broker-db:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: pact_broker
+          POSTGRES_PASSWORD: pact_broker
+          POSTGRES_DB: pact_broker
+        options: >-
+          --health-cmd "pg_isready -U pact_broker"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      pact-broker:
+        image: pactfoundation/pact-broker:latest
+        env:
+          PACT_BROKER_DATABASE_ADAPTER: postgres
+          PACT_BROKER_DATABASE_HOST: pact-broker-db
+          PACT_BROKER_DATABASE_NAME: pact_broker
+          PACT_BROKER_DATABASE_USERNAME: pact_broker
+          PACT_BROKER_DATABASE_PASSWORD: pact_broker
+          PACT_BROKER_PORT: "9292"
+          PACT_BROKER_BASIC_AUTH_USERNAME: pact
+          PACT_BROKER_BASIC_AUTH_PASSWORD: pact
+        ports:
+          - 9292:9292
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Wait for Pact Broker
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf -u "$PACTBROKER_USERNAME:$PACTBROKER_PASSWORD" \
+              "$PACTBROKER_URL/diagnostic/status/heartbeat" && exit 0
+            sleep 2
+          done
+          echo "Pact Broker did not become healthy in time" >&2
+          exit 1
+
+      - name: Generate consumer contracts (OrderService)
+        run: |
+          cd order-service
+          ./mvnw -q clean test
+
+      - name: Publish contracts to Pact Broker
+        run: |
+          cd order-service
+          ./mvnw -q pact:publish \
+            -Dpactbroker.url="$PACTBROKER_URL" \
+            -Dpactbroker.username="$PACTBROKER_USERNAME" \
+            -Dpactbroker.password="$PACTBROKER_PASSWORD" \
+            -Dpact.consumer.version="$PACT_VERSION" \
+            -Dpact.consumer.tag="$PACT_TAG"
+
+      - name: Verify ProductService against broker contracts
+        run: |
+          cd product-service
+          ./mvnw -q clean verify \
+            -Dpactbroker.url="$PACTBROKER_URL" \
+            -Dpactbroker.username="$PACTBROKER_USERNAME" \
+            -Dpactbroker.password="$PACTBROKER_PASSWORD" \
+            -Dpact.provider.version="$PACT_VERSION" \
+            -Dpact.provider.tag="$PACT_TAG" \
+            -Dpact.verifier.publishResults=true
+
+      - name: Verify UserService against broker contracts
+        run: |
+          cd user-service
+          ./mvnw -q clean verify \
+            -Dpactbroker.url="$PACTBROKER_URL" \
+            -Dpactbroker.username="$PACTBROKER_USERNAME" \
+            -Dpactbroker.password="$PACTBROKER_PASSWORD" \
+            -Dpact.provider.version="$PACT_VERSION" \
+            -Dpact.provider.tag="$PACT_TAG" \
+            -Dpact.verifier.publishResults=true
+
+      - name: can-i-deploy
+        run: |
+          docker run --rm --network host pactfoundation/pact-cli:latest \
+            broker can-i-deploy \
+            --broker-base-url "$PACTBROKER_URL" \
+            --broker-username "$PACTBROKER_USERNAME" \
+            --broker-password "$PACTBROKER_PASSWORD" \
+            --pacticipant OrderService --version "$PACT_VERSION" \
+            --pacticipant ProductService --version "$PACT_VERSION" \
+            --pacticipant UserService --version "$PACT_VERSION"

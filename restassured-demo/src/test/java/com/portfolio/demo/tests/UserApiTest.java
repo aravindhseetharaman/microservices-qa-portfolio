@@ -73,11 +73,11 @@ public class UserApiTest   {
                 .as(User.class);
 
         // top level
-            assertThat(user.getName()).isEqualTo("Leanne Graham");
-            assertThat(user.getEmail()).isEqualTo("Sincere@april.biz");
+        assertThat(user.getName()).isEqualTo("Leanne Graham");
+        assertThat(user.getEmail()).isEqualTo("Sincere@april.biz");
 
         // nested object
-            assertThat(user.getAddress()).isNotNull();
+        assertThat(user.getAddress()).isNotNull();
         assertThat(user.getAddress().getCity()).isEqualTo("Gwenborough");
         assertThat(user.getAddress().getStreet()).isEqualTo("Kulas Light");
 
